@@ -6,10 +6,10 @@ class ProductForm extends StatefulWidget {
   final VoidCallback onProductSaved;
 
   const ProductForm({
-    Key? key,
+    super.key,
     this.product,
     required this.onProductSaved,
-  }) : super(key: key);
+  });
 
   @override
   State<ProductForm> createState() => _ProductFormState();

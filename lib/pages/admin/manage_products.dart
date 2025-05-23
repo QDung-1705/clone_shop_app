@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:food_app/services/api_service.dart';
 
 class ManageProducts extends StatefulWidget {
+  const ManageProducts({super.key});
+
   @override
   _ManageProductsState createState() => _ManageProductsState();
 }

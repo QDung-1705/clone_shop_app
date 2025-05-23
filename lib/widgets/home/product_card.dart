@@ -8,10 +8,10 @@ class ProductCard extends StatelessWidget {
   final String docId;
 
   const ProductCard({
-    Key? key,
+    super.key,
     required this.product,
     required this.docId,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -147,12 +147,12 @@ class ShopeeStyleProductCard extends StatelessWidget {
   final String soldCount;
 
   const ShopeeStyleProductCard({
-    Key? key,
+    super.key,
     required this.product,
     required this.docId,
     required this.discount,
     required this.soldCount,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -218,7 +218,7 @@ class ShopeeStyleProductCard extends StatelessWidget {
                           ),
                         ),
                         child: Text(
-                          "-${discount}%",
+                          "-$discount%",
                           style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,

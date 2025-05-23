@@ -18,7 +18,7 @@ class _HomeState extends State<Home> {
   bool _isLoading = true;
   String? userName;
   List<Map<String, dynamic>> _products = [];
-  List<Map<String, dynamic>> _filteredProducts = [];
+  final List<Map<String, dynamic>> _filteredProducts = [];
   List<Map<String, dynamic>> _categories = [];
   String _selectedCategory = "All";
   TextEditingController searchController = TextEditingController();

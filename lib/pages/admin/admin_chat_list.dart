@@ -5,7 +5,7 @@ import 'dart:async';
 import 'admin_chat_detail.dart';
 
 class AdminChatList extends StatefulWidget {
-  const AdminChatList({Key? key}) : super(key: key);
+  const AdminChatList({super.key});
 
   @override
   State<AdminChatList> createState() => _AdminChatListState();

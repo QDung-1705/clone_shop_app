@@ -266,7 +266,7 @@ class _OrderState extends State<Order> {
 
       // Gọi API tạo đơn hàng
       final result = await ApiService.createOrder(
-        int.parse(userId!),
+        int.parse(userId),
         totalAmount,
         widget.cartItems,
       );

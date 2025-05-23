@@ -11,7 +11,7 @@ class CategoriesSection extends StatelessWidget {
   final Function() onBeautyTap;
 
   const CategoriesSection({
-    Key? key,
+    super.key,
     required this.selectedCategory,
     required this.onAllTap,
     required this.onClothingTap,
@@ -20,7 +20,7 @@ class CategoriesSection extends StatelessWidget {
     required this.onElectronicsTap,
     required this.onSportsTap,
     required this.onBeautyTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

@@ -5,7 +5,7 @@ import 'package:food_app/services/api_service.dart';
 import 'package:food_app/services/shared_pref.dart';
 
 class OrderHistory extends StatefulWidget {
-  const OrderHistory({Key? key}) : super(key: key);
+  const OrderHistory({super.key});
 
   @override
   State<OrderHistory> createState() => _OrderHistoryState();
@@ -343,7 +343,7 @@ class _OrderHistoryState extends State<OrderHistory>
                             subtitle:
                                 Text('Số lượng: ${item['quantity'] ?? 1}'),
                             trailing: Text(
-                              '${NumberFormat.currency(locale: 'vi_VN', symbol: '₫').format(double.tryParse(item['price'].toString()) ?? 0)}',
+                              NumberFormat.currency(locale: 'vi_VN', symbol: '₫').format(double.tryParse(item['price'].toString()) ?? 0),
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Theme.of(context).primaryColor,
@@ -371,7 +371,7 @@ class _OrderHistoryState extends State<OrderHistory>
                       ),
                     ),
                     Text(
-                      '${NumberFormat.currency(locale: 'vi_VN', symbol: '₫').format(double.tryParse(order['total_amount'].toString()) ?? 0)}',
+                      NumberFormat.currency(locale: 'vi_VN', symbol: '₫').format(double.tryParse(order['total_amount'].toString()) ?? 0),
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
@@ -689,7 +689,7 @@ class _OrderHistoryState extends State<OrderHistory>
                         });
                       },
                     );
-                  }).toList(),
+                  }),
                   SizedBox(height: 16),
                   // Nút xác nhận
                   SizedBox(

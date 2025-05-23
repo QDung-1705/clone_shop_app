@@ -8,8 +8,7 @@ class AdminChatDetail extends StatefulWidget {
   final String userName;
 
   const AdminChatDetail(
-      {Key? key, required this.userId, required this.userName})
-      : super(key: key);
+      {super.key, required this.userId, required this.userName});
 
   @override
   State<AdminChatDetail> createState() => _AdminChatDetailState();

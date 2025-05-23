@@ -7,8 +7,7 @@ class UserChatDetail extends StatefulWidget {
   final String userId;
   final String userName;
 
-  const UserChatDetail({Key? key, required this.userId, required this.userName})
-      : super(key: key);
+  const UserChatDetail({super.key, required this.userId, required this.userName});
 
   @override
   State<UserChatDetail> createState() => _UserChatDetailState();

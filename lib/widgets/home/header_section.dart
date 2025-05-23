@@ -15,13 +15,13 @@ class HeaderSection extends StatefulWidget {
   final CartProvider cartProvider;
 
   const HeaderSection({
-    Key? key,
+    super.key,
     required this.userName,
     required this.searchController,
     required this.searchQuery,
     required this.handleSearch,
     required this.cartProvider,
-  }) : super(key: key);
+  });
 
   @override
   State<HeaderSection> createState() => _HeaderSectionState();

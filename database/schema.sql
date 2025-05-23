@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Tạo bảng food_items
-CREATE TABLE IF NOT EXISTS food_items (
+-- Tạo bảng products (tên đúng thay vì food_items)
+CREATE TABLE IF NOT EXISTS products (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
   description TEXT,
@@ -33,27 +33,25 @@ CREATE TABLE IF NOT EXISTS orders (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Tạo bảng order_items
+-- Tạo bảng order_items (KHÔNG cần cột name, dùng JOIN từ products)
 CREATE TABLE IF NOT EXISTS order_items (
   id INT AUTO_INCREMENT PRIMARY KEY,
   order_id INT NOT NULL,
-  food_item_id INT NOT NULL,
+  product_id INT NOT NULL,
   quantity INT NOT NULL,
   price DECIMAL(10, 2) NOT NULL,
   FOREIGN KEY (order_id) REFERENCES orders(id),
-  FOREIGN KEY (food_item_id) REFERENCES food_items(id)
+  FOREIGN KEY (product_id) REFERENCES products(id)
 );
 
--- Thêm dữ liệu mẫu cho bảng users với tài khoản admin
+-- Thêm dữ liệu mẫu cho bảng users
 INSERT INTO users (name, email, password, role) VALUES
 ('Admin User', 'admin@example.com', 'admin123', 'admin'),
 ('Test User', 'user@example.com', 'user123', 'user');
 
--- Thêm dữ liệu mẫu cho bảng food_items
-INSERT INTO food_items (name, description, price, category, image_path) VALUES
+-- Thêm dữ liệu mẫu cho bảng products
+INSERT INTO products (name, description, price, category, image_path) VALUES
 ('Pizza Margherita', 'Classic pizza with tomato sauce and mozzarella', 9.99, 'Pizza', 'assets/images/pizza1.jpg'),
 ('Hamburger', 'Beef patty with lettuce, tomato, and cheese', 7.99, 'Burger', 'assets/images/burger1.jpg'),
-('Chicken Salad', 'Fresh salad with grilled chicken', 6.99, 'Salad', 'assets/images/salad1.jpg');
-
-
-
+('Chicken Salad', 'Fresh salad with grilled chicken', 6.99, 'Salad', 'assets/images/salad1.jpg'),
+('Phone', 'Smartphone mới nhất', 41650000, 'Electronics', 'assets/images/phone.jpg');

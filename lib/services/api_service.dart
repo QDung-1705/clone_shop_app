@@ -8,7 +8,7 @@ import 'package:http_parser/http_parser.dart';
 
 class ApiService {
   // Cập nhật baseUrl để không có "api/" ở cuối
-  static const String baseUrl = 'http://localhost:3001/api';
+  static const String baseUrl = 'https://server-cloneshopapp.onrender.com/api';
   static const Duration requestTimeout = Duration(seconds: 10);
 
   // Đăng ký người dùng mới
@@ -708,8 +708,7 @@ class ApiService {
   }
 
   // Lấy tin nhắn chat của người dùng
-  static Future<List<Map<String, dynamic>>> getChatMessages(
-      String userId) async {
+  static Future<List<Map<String, dynamic>>> getChatMessages(String userId) async {
     try {
       // Thêm timestamp để tránh cache hoàn toàn
       final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -718,20 +717,31 @@ class ApiService {
         headers: {'Cache-Control': 'no-cache, no-store, must-revalidate'},
       ).timeout(requestTimeout);
 
-      print(
-          'API response for messages: ${response.statusCode} - ${response.body}');
+      print('API response for messages: ${response.statusCode} - ${response.body}');
 
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['status'] == 'success') {
-          final messages = List<Map<String, dynamic>>.from(data['data']);
-          print('Retrieved ${messages.length} messages for user $userId');
-          return messages;
+        final data = json.decode(response.body) as Map<String, dynamic>?;
+        if (data != null && data['status'] == 'success') {
+          final messagesData = data['data'] as List?;
+          if (messagesData != null) {
+            final messages = messagesData.cast<Map<String, dynamic>>().map((msg) {
+              return {
+                'message': (msg['message'] as String?) ?? 'Không có tin nhắn',
+                'created_at': (msg['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+                'sender': (msg['sender'] as String?) ?? 'unknown',
+                'is_read': (msg['is_read'] as bool?) ?? false,
+              };
+            }).toList();
+            print('Retrieved ${messages.length} messages for user $userId');
+            return messages;
+          }
         }
       }
+      print('No valid messages returned, returning empty list');
       return [];
     } catch (e) {
       print('Error getting chat messages: $e');
+      print('Stack trace: ${StackTrace.current}');
       return [];
     }
   }

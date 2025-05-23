@@ -1,25 +1,25 @@
-const mysql = require('mysql2/promise');
+const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcrypt');
 
 const saltRounds = 10;
 
-async function encryptPasswords() {
-  // Kết nối MySQL
-  const pool = mysql.createPool({
-    host: 'localhost',
-    user: 'root',
-    password: 'hieu@1010',
-    database: 'food_app',
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-  });
+// Cấu hình Supabase
+const supabaseUrl = process.env.SUPABASE_URL || 'https://pypccclagewnbnvsyslb.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5cGNjY2xhZ2V3bmJudnN5c2xiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY5NTg5NTEsImV4cCI6MjA2MjUzNDk1MX0.WfB9CwuwxSPeTiNXcRvOldWDKASVSxkaawjNNqmAGJw';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
+async function encryptPasswords() {
   try {
     // Lấy tất cả người dùng
-    const [users] = await pool.query('SELECT id, password FROM users');
+    const { data: users, error: selectError } = await supabase
+      .from('users')
+      .select('id, password');
 
-    console.log(`Found ${users.length} users to update.`);
+    if (selectError) {
+      throw new Error(`Lỗi khi lấy người dùng: ${selectError.message}`);
+    }
+
+    console.log(`Tìm thấy ${users.length} người dùng để cập nhật.`);
 
     // Mã hóa mật khẩu cho từng người dùng
     for (const user of users) {
@@ -28,23 +28,27 @@ async function encryptPasswords() {
         const hashedPassword = await bcrypt.hash(user.password, saltRounds);
 
         // Cập nhật mật khẩu đã mã hóa
-        await pool.query(
-          'UPDATE users SET password = ? WHERE id = ?',
-          [hashedPassword, user.id]
-        );
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ password: hashedPassword })
+          .eq('id', user.id);
 
-        console.log(`Updated password for user ID: ${user.id}`);
+        if (updateError) {
+          throw new Error(`Lỗi khi cập nhật mật khẩu cho ID ${user.id}: ${updateError.message}`);
+        }
+
+        console.log(`Đã cập nhật mật khẩu cho người dùng ID: ${user.id}`);
       } else {
-        console.log(`Password for user ID: ${user.id} is already encrypted.`);
+        console.log(`Mật khẩu cho người dùng ID: ${user.id} đã được mã hóa.`);
       }
     }
 
-    console.log('All passwords have been encrypted successfully.');
+    console.log('Tất cả mật khẩu đã được mã hóa thành công.');
   } catch (error) {
-    console.error('Error encrypting passwords:', error);
+    console.error('Lỗi khi mã hóa mật khẩu:', error.message);
   } finally {
-    // Đóng kết nối
-    await pool.end();
+    // Supabase client tự động quản lý kết nối, không cần đóng thủ công
+    console.log('Hoàn tất quá trình.');
   }
 }
 

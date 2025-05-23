@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'dart:async';
 
 class ManageOrders extends StatefulWidget {
-  const ManageOrders({Key? key}) : super(key: key);
+  const ManageOrders({super.key});
 
   @override
   State<ManageOrders> createState() => _ManageOrdersState();
@@ -381,7 +381,7 @@ class _ManageOrdersState extends State<ManageOrders> {
   // Phương thức mới để lấy trạng thái hiện tại của đơn hàng
   String _getCurrentOrderStatus(String orderId) {
     try {
-      final orders = _ordersFuture as Future<List<Map<String, dynamic>>>;
+      final orders = _ordersFuture;
       final ordersList = orders.then((list) {
         return list.firstWhere((order) => order['id'].toString() == orderId,
             orElse: () => {'status': 'pending'});

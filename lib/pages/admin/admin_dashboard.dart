@@ -7,7 +7,7 @@ import 'package:food_app/pages/admin/manage_users.dart';
 import 'package:food_app/pages/admin/admin_chat_list.dart';
 
 class AdminDashboard extends StatefulWidget {
-  const AdminDashboard({Key? key}) : super(key: key);
+  const AdminDashboard({super.key});
 
   @override
   State<AdminDashboard> createState() => _AdminDashboardState();

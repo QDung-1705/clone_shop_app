@@ -6,7 +6,7 @@ import 'package:food_app/pages/order.dart';
 class Details extends StatefulWidget {
   final Map<String, dynamic> product;
 
-  const Details({Key? key, required this.product}) : super(key: key);
+  const Details({super.key, required this.product});
 
   @override
   State<Details> createState() => _DetailsState();

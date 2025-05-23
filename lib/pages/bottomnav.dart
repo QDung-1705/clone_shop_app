@@ -10,7 +10,7 @@ import 'package:food_app/providers/notification_provider.dart';
 import 'package:provider/provider.dart';
 
 class BottomNav extends StatefulWidget {
-  const BottomNav({Key? key}) : super(key: key);
+  const BottomNav({super.key});
 
   @override
   State<BottomNav> createState() => _BottomNavState();

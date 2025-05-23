@@ -3,13 +3,13 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   // URL cơ sở của API
-  final String baseUrl = 'http://localhost:3001/api';
-  
+  final String baseUrl = 'https://server-cloneshopapp.onrender.com/api';
+
   // GET tất cả các món ăn
   Future<List<dynamic>> getFoodItems() async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/food-items'));
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return data['data'];
@@ -18,15 +18,15 @@ class ApiService {
       }
     } catch (e) {
       print('Error getting food items: $e');
-      throw e;
+      rethrow;
     }
   }
-  
+
   // GET một món ăn theo ID
   Future<dynamic> getFoodItem(int id) async {
     try {
       final response = await http.get(Uri.parse('$baseUrl/food-items/$id'));
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         return data['data'];
@@ -37,10 +37,10 @@ class ApiService {
       }
     } catch (e) {
       print('Error getting food item: $e');
-      throw e;
+      rethrow;
     }
   }
-  
+
   // Đăng nhập
   Future<dynamic> signIn(String email, String password) async {
     try {
@@ -52,7 +52,7 @@ class ApiService {
           'password': password,
         }),
       );
-      
+
       if (response.statusCode == 200) {
         return json.decode(response.body)['data'];
       } else {
@@ -60,10 +60,10 @@ class ApiService {
       }
     } catch (e) {
       print('Error signing in: $e');
-      throw e;
+      rethrow;
     }
   }
-  
+
   // Đăng ký
   Future<dynamic> signUp(String name, String email, String password) async {
     try {
@@ -76,7 +76,7 @@ class ApiService {
           'password': password,
         }),
       );
-      
+
       if (response.statusCode == 201) {
         return json.decode(response.body)['data'];
       } else {
@@ -84,8 +84,7 @@ class ApiService {
       }
     } catch (e) {
       print('Error signing up: $e');
-      throw e;
+      rethrow;
     }
   }
 }
-

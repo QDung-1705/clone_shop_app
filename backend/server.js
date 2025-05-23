@@ -1,53 +1,46 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const bcrypt = require('bcrypt'); // Thêm bcrypt
+const bcrypt = require('bcrypt');
+const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 3001;
-const saltRounds = 10; // Số vòng băm cho bcrypt
+const saltRounds = 10;
+
+// Supabase configuration
+const supabaseUrl = process.env.SUPABASE_URL || 'https://pypccclagewnbnvsyslb.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5cGNjY2xhZ2V3bmJudnN5c2xiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY5NTg5NTEsImV4cCI6MjA2MjUzNDk1MX0.WfB9CwuwxSPeTiNXcRvOldWDKASVSxkaawjNNqmAGJw';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Middleware
-app.use(cors()); // Thêm middleware CORS
+app.use(cors());
 app.use(bodyParser.json());
 
-// Thêm log chi tiết hơn
+// Detailed logging
 app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
   next();
 });
 
-// Kết nối MySQL
-const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  password: 'hieu@1010',
-  database: 'food_app',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
+// Test Supabase connection
 async function testDatabaseConnection() {
   try {
-    const connection = await pool.getConnection();
-    console.log('Database connection successful');
-    connection.release();
+    const { data, error } = await supabase.from('users').select('id').limit(1);
+    if (error) throw error;
+    console.log('Supabase connection successful');
     return true;
   } catch (error) {
-    console.error('Database connection failed:', error);
+    console.error('Supabase connection failed:', error);
     return false;
   }
 }
 
-// Khai báo biến server ở phạm vi toàn cục
+// Start server after checking connection
 let server;
-
-// Khởi động server sau khi kiểm tra kết nối
 async function startServer() {
   const dbConnected = await testDatabaseConnection();
 
@@ -66,6 +59,7 @@ async function startServer() {
 
 startServer();
 
+// Graceful shutdown
 let isShuttingDown = false;
 
 process.on('SIGTERM', async () => {
@@ -74,14 +68,8 @@ process.on('SIGTERM', async () => {
 
   console.log('SIGTERM signal received: closing HTTP server');
   if (server) {
-    server.close(async () => {
+    server.close(() => {
       console.log('HTTP server closed');
-      try {
-        await pool.end();
-        console.log('Database connections closed');
-      } catch (err) {
-        console.error('Error closing database connections:', err);
-      }
       process.exit(0);
     });
 
@@ -100,18 +88,11 @@ process.on('SIGINT', async () => {
 
   console.log('SIGINT signal received: closing HTTP server');
   if (server) {
-    server.close(async () => {
+    server.close(() => {
       console.log('HTTP server closed');
-      try {
-        await pool.end();
-        console.log('Database connections closed');
-      } catch (err) {
-        console.error('Error closing database connections:', err);
-      }
       process.exit(0);
     });
 
-    // Đảm bảo thoát sau 5 giây nếu server không đóng đúng cách
     setTimeout(() => {
       console.log('Forcing exit after timeout');
       process.exit(1);
@@ -121,26 +102,26 @@ process.on('SIGINT', async () => {
   }
 });
 
-// Thêm xử lý lỗi tổng quát
+// Error handling
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  // Không tắt server ngay lập tức khi có lỗi
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Không tắt server ngay lập tức khi có lỗi
 });
 
-// Thêm API endpoint để lấy thông tin người dùng
+// Get user information
 app.get('/api/users/:id', async (req, res) => {
   try {
     const userId = req.params.id;
 
-    const [users] = await pool.query(
-      'SELECT id, name, email, role FROM users WHERE id = ?',
-      [userId]
-    );
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, name, email, role')
+      .eq('id', userId);
+
+    if (error) throw error;
 
     if (users.length === 0) {
       return res.status(404).json({
@@ -161,7 +142,7 @@ app.get('/api/users/:id', async (req, res) => {
   }
 });
 
-// Đăng nhập
+// Login
 app.post('/api/users/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -170,28 +151,29 @@ app.post('/api/users/login', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Email and password are required' });
     }
 
-    // Tìm người dùng theo email
-    const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email);
+
+    if (error) throw error;
 
     if (users.length === 0) {
       return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
     }
 
     const user = users[0];
-
-    // So sánh mật khẩu
     const passwordMatch = await bcrypt.compare(password, user.password);
 
     if (!passwordMatch) {
       return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
     }
 
-    // Trả về thông tin người dùng (không bao gồm mật khẩu)
     const userData = {
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role || 'user', // Mặc định là 'user' nếu không có role
+      role: user.role || 'user'
     };
 
     res.json({ status: 'success', message: 'Login successful', data: userData });
@@ -201,7 +183,7 @@ app.post('/api/users/login', async (req, res) => {
   }
 });
 
-// Đăng ký
+// Register
 app.post('/api/users/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -210,27 +192,31 @@ app.post('/api/users/register', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'All fields are required' });
     }
 
-    // Kiểm tra email đã tồn tại chưa
-    const [existingUsers] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email);
+
+    if (checkError) throw checkError;
 
     if (existingUsers.length > 0) {
       return res.status(409).json({ status: 'error', message: 'Email already exists' });
     }
 
-    // Mã hóa mật khẩu
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Thêm người dùng mới vào cơ sở dữ liệu (mặc định role là 'user')
-    const [result] = await pool.query(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-      [name, email, hashedPassword, 'user']
-    );
+    const { data, error } = await supabase
+      .from('users')
+      .insert([{ name, email, password: hashedPassword, role: 'user' }])
+      .select();
+
+    if (error) throw error;
 
     res.status(201).json({
       status: 'success',
       message: 'User registered successfully',
       data: {
-        id: result.insertId,
+        id: data[0].id,
         name,
         email,
         role: 'user'
@@ -242,7 +228,7 @@ app.post('/api/users/register', async (req, res) => {
   }
 });
 
-// API tạo đơn hàng mới
+// Create order
 app.post('/api/orders', async (req, res) => {
   try {
     const { user_id, total_amount, items } = req.body;
@@ -253,103 +239,69 @@ app.post('/api/orders', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Invalid order data' });
     }
 
-    // Bắt đầu transaction
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert([{ user_id, total_amount, status: 'pending' }])
+      .select();
 
-    try {
-      // Tạo đơn hàng
-      const [orderResult] = await connection.query(
-        'INSERT INTO orders (user_id, total_amount, status) VALUES (?, ?, ?)',
-        [user_id, total_amount, 'pending']
-      );
+    if (orderError) throw orderError;
 
-      const orderId = orderResult.insertId;
+    const orderId = order[0].id;
 
-      // Thêm các sản phẩm vào đơn hàng
-      for (const item of items) {
-        // Đảm bảo product_id là số nguyên
-        const productId = parseInt(item.product_id || item.id);
+    for (const item of items) {
+      const productId = parseInt(item.product_id || item.id);
 
-        if (isNaN(productId)) {
-          throw new Error(`Invalid product ID: ${item.product_id || item.id}`);
-        }
+      if (isNaN(productId)) {
+        throw new Error(`Invalid product ID: ${item.product_id || item.id}`);
+      }
 
-        const quantity = parseInt(item.quantity) || 1;
-        const price = parseFloat(item.price) || 0;
+      const quantity = parseInt(item.quantity) || 1;
+      const price = parseFloat(item.price) || 0;
+      let productName = item.name;
 
-        // Lấy tên sản phẩm từ request
-        const productName = item.name;
+      if (!productName) {
+        console.warn(`Warning: Product name is null for product_id ${productId}`);
 
-        console.log(`Adding item to order #${orderId}:`, {
-          product_id: productId,
-          name: productName,
-          quantity: quantity,
-          price: price
-        });
+        const { data: products, error: productError } = await supabase
+          .from('products')
+          .select('name')
+          .eq('id', productId);
 
-        // Kiểm tra xem tên sản phẩm có null không
-        if (!productName) {
-          console.warn(`Warning: Product name is null for product_id ${productId}`);
+        if (productError) throw productError;
 
-          // Nếu tên sản phẩm null, thử lấy từ bảng products
-          const [products] = await connection.query(
-            'SELECT name FROM products WHERE id = ?',
-            [productId]
-          );
-
-          if (products.length > 0 && products[0].name) {
-            console.log(`Found product name from database: ${products[0].name}`);
-            await connection.query(
-              'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-              [orderId, productId, products[0].name, quantity, price]
-            );
-          } else {
-            // Nếu không tìm thấy, sử dụng ID sản phẩm
-            const fallbackName = `Sản phẩm #${productId}`;
-            console.log(`Using fallback name: ${fallbackName}`);
-            await connection.query(
-              'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-              [orderId, productId, fallbackName, quantity, price]
-            );
-          }
+        if (products.length > 0 && products[0].name) {
+          console.log(`Found product name from database: ${products[0].name}`);
+          productName = products[0].name;
         } else {
-          // Nếu có tên sản phẩm, sử dụng nó
-          await connection.query(
-            'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-            [orderId, productId, productName, quantity, price]
-          );
+          productName = `Sản phẩm #${productId}`;
+          console.log(`Using fallback name: ${productName}`);
         }
       }
 
-      // Commit transaction
-      await connection.commit();
-      connection.release();
+      const { error: itemError } = await supabase
+        .from('order_items')
+        .insert([{ order_id: orderId, product_id: productId, name: productName, quantity, price }]);
 
-      res.status(201).json({
-        status: 'success',
-        message: 'Order created successfully',
-        data: {
-          order_id: orderId,
-          user_id,
-          total_amount,
-          items
-        }
-      });
-    } catch (error) {
-      // Rollback nếu có lỗi
-      await connection.rollback();
-      connection.release();
-      console.error('Transaction error:', error);
-      throw error;
+      if (itemError) throw itemError;
     }
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Order created successfully',
+      data: {
+        order_id: orderId,
+        user_id,
+        total_amount,
+        items
+      }
+    });
   } catch (error) {
     console.error('Error creating order:', error);
     res.status(500).json({ status: 'error', message: error.message });
   }
 });
 
-// API thay đổi mật khẩu
+// Change password
 app.put('/api/users/:id/password', async (req, res) => {
   try {
     const userId = req.params.id;
@@ -362,11 +314,12 @@ app.put('/api/users/:id/password', async (req, res) => {
       });
     }
 
-    // Lấy thông tin người dùng
-    const [users] = await pool.query(
-      'SELECT * FROM users WHERE id = ?',
-      [userId]
-    );
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId);
+
+    if (userError) throw userError;
 
     if (users.length === 0) {
       return res.status(404).json({
@@ -376,8 +329,6 @@ app.put('/api/users/:id/password', async (req, res) => {
     }
 
     const user = users[0];
-
-    // Kiểm tra mật khẩu hiện tại
     const passwordMatch = await bcrypt.compare(currentPassword, user.password);
 
     if (!passwordMatch) {
@@ -387,14 +338,14 @@ app.put('/api/users/:id/password', async (req, res) => {
       });
     }
 
-    // Mã hóa mật khẩu mới
     const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
-    // Cập nhật mật khẩu
-    await pool.query(
-      'UPDATE users SET password = ? WHERE id = ?',
-      [hashedPassword, userId]
-    );
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password: hashedPassword })
+      .eq('id', userId);
+
+    if (updateError) throw updateError;
 
     res.json({
       status: 'success',
@@ -408,68 +359,53 @@ app.put('/api/users/:id/password', async (req, res) => {
   }
 });
 
-// API endpoints cho đơn hàng
-
-// Lấy tất cả đơn hàng (cho admin)
+// Get all orders
 app.get('/api/orders', async (req, res) => {
   try {
     const { user_id, status } = req.query;
 
-    let query = `
-      SELECT o.*, u.name as user_name 
-      FROM orders o
-      LEFT JOIN users u ON o.user_id = u.id
-      WHERE 1=1
-    `;
-
-    const params = [];
+    let query = supabase
+      .from('orders')
+      .select(`
+        *,
+        users!inner(name)
+      `);
 
     if (user_id) {
-      query += ' AND o.user_id = ?';
-      params.push(user_id);
+      query = query.eq('user_id', user_id);
     }
 
     if (status) {
-      query += ' AND o.status = ?';
-      params.push(status);
+      query = query.eq('status', status);
     }
 
-    // Sắp xếp theo id giảm dần (đơn hàng mới nhất trước)
-    query += ' ORDER BY o.id DESC';
+    query = query.order('id', { ascending: false });
 
     console.log('Orders query:', query);
 
-    const [orders] = await pool.query(query, params);
+    const { data: orders, error } = await query;
+
+    if (error) throw error;
+
     console.log(`Found ${orders.length} orders`);
 
-    // Lấy chi tiết đơn hàng cho mỗi đơn hàng
     const ordersWithItems = await Promise.all(orders.map(async (order) => {
-      // Lấy thông tin chi tiết đơn hàng kèm tên sản phẩm
-      const [items] = await pool.query(`
-        SELECT oi.*, p.name as product_name, p.image_path 
-        FROM order_items oi
-        LEFT JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = ?
-      `, [order.id]);
+      const { data: items, error: itemError } = await supabase
+        .from('order_items')
+        .select(`
+          *,
+          products(name, image_path)
+        `)
+        .eq('order_id', order.id);
+
+      if (itemError) throw itemError;
 
       console.log(`Order #${order.id} has ${items.length} items`);
 
-      // Sử dụng tên sản phẩm từ order_items hoặc từ products
-      const itemsWithNames = items.map(item => {
-        // In ra thông tin để debug
-        console.log(`Item in order #${order.id}:`, {
-          id: item.id,
-          product_id: item.product_id,
-          name: item.name,
-          product_name: item.product_name
-        });
-
-        // Ưu tiên sử dụng tên từ bảng products nếu có
-        return {
-          ...item,
-          name: item.product_name || item.name || 'Sản phẩm không xác định'
-        };
-      });
+      const itemsWithNames = items.map(item => ({
+        ...item,
+        name: item.name || item.product_name || `Sản phẩm #${item.product_id}`
+      }));
 
       return {
         ...order,
@@ -490,7 +426,7 @@ app.get('/api/orders', async (req, res) => {
   }
 });
 
-// Cập nhật trạng thái đơn hàng
+// Update order status
 app.put('/api/orders/:id/status', async (req, res) => {
   try {
     const { status, reason } = req.body;
@@ -503,7 +439,6 @@ app.put('/api/orders/:id/status', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Status is required' });
     }
 
-    // Kiểm tra trạng thái hợp lệ
     const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'returning', 'returned'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
@@ -512,46 +447,46 @@ app.put('/api/orders/:id/status', async (req, res) => {
       });
     }
 
-    // Lấy thông tin đơn hàng hiện tại
-    const [orders] = await pool.query('SELECT * FROM orders WHERE id = ?', [orderId]);
+    const { data: orders, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId);
+
+    if (orderError) throw orderError;
+
     if (orders.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Order not found' });
     }
+
     const order = orders[0];
 
-    // Lấy thông tin sản phẩm trong đơn hàng để hiển thị trong thông báo
-    const [items] = await pool.query('SELECT * FROM order_items WHERE order_id = ?', [orderId]);
+    const { data: items, error: itemError } = await supabase
+      .from('order_items')
+      .select('*')
+      .eq('order_id', orderId);
+
+    if (itemError) throw itemError;
+
     let productText = '';
     if (items.length > 0) {
-      if (items.length === 1) {
-        productText = items[0].name || `#${items[0].product_id}`;
-      } else {
-        productText = `(${items.length} sản phẩm)`;
-      }
+      productText = items.length === 1 ? (items[0].name || `#${items[0].product_id}`) : `(${items.length} sản phẩm)`;
     }
 
-    // Cập nhật trạng thái và lý do trả hàng nếu có
+    let updateData = { status };
     if (status === 'returning' && reason) {
-      await pool.query(
-        'UPDATE orders SET status = ?, return_reason = ? WHERE id = ?',
-        [status, reason, orderId]
-      );
-    } else {
-      await pool.query(
-        'UPDATE orders SET status = ? WHERE id = ?',
-        [status, orderId]
-      );
+      updateData.return_reason = reason;
     }
-
-    // Cập nhật thời gian giao hàng nếu trạng thái là delivered
     if (status === 'delivered') {
-      await pool.query(
-        'UPDATE orders SET delivered_at = NOW() WHERE id = ?',
-        [orderId]
-      );
+      updateData.delivered_at = new Date().toISOString();
     }
 
-    // Tạo thông báo cho người dùng về việc cập nhật trạng thái đơn hàng
+    const { error: updateError } = await supabase
+      .from('orders')
+      .update(updateData)
+      .eq('id', orderId);
+
+    if (updateError) throw updateError;
+
     let title, message;
     switch (status) {
       case 'processing':
@@ -588,11 +523,11 @@ app.put('/api/orders/:id/status', async (req, res) => {
         message = `Đơn hàng ${productText} của bạn đã được cập nhật sang trạng thái ${status}.`;
     }
 
-    // Thêm thông báo vào database
-    await pool.query(
-      'INSERT INTO notifications (user_id, title, message, is_read) VALUES (?, ?, ?, ?)',
-      [order.user_id, title, message, 0]
-    );
+    const { error: notificationError } = await supabase
+      .from('notifications')
+      .insert([{ user_id: order.user_id, title, message, is_read: false }]);
+
+    if (notificationError) throw notificationError;
 
     res.json({
       status: 'success',
@@ -605,143 +540,31 @@ app.put('/api/orders/:id/status', async (req, res) => {
   }
 });
 
-// Tạo đơn hàng mới
-app.post('/api/orders', async (req, res) => {
-  try {
-    const { user_id, total_amount, items } = req.body;
-
-    console.log('Received order request:', JSON.stringify({ user_id, total_amount, items }, null, 2));
-
-    if (!user_id || !total_amount || !items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ status: 'error', message: 'Invalid order data' });
-    }
-
-    // Bắt đầu transaction
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
-
-    try {
-      // Tạo đơn hàng
-      const [orderResult] = await connection.query(
-        'INSERT INTO orders (user_id, total_amount, status) VALUES (?, ?, ?)',
-        [user_id, total_amount, 'pending']
-      );
-
-      const orderId = orderResult.insertId;
-
-      // Thêm các sản phẩm vào đơn hàng
-      for (const item of items) {
-        // Đảm bảo product_id là số nguyên
-        const productId = parseInt(item.product_id || item.id);
-
-        if (isNaN(productId)) {
-          throw new Error(`Invalid product ID: ${item.product_id || item.id}`);
-        }
-
-        const quantity = parseInt(item.quantity) || 1;
-        const price = parseFloat(item.price) || 0;
-
-        // Lấy tên sản phẩm từ request
-        const productName = item.name;
-
-        console.log(`Adding item to order #${orderId}:`, {
-          product_id: productId,
-          name: productName,
-          quantity: quantity,
-          price: price
-        });
-
-        // Kiểm tra xem tên sản phẩm có null không
-        if (!productName) {
-          console.warn(`Warning: Product name is null for product_id ${productId}`);
-
-          // Nếu tên sản phẩm null, thử lấy từ bảng products
-          const [products] = await connection.query(
-            'SELECT name FROM products WHERE id = ?',
-            [productId]
-          );
-
-          if (products.length > 0 && products[0].name) {
-            console.log(`Found product name from database: ${products[0].name}`);
-            await connection.query(
-              'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-              [orderId, productId, products[0].name, quantity, price]
-            );
-          } else {
-            // Nếu không tìm thấy, sử dụng ID sản phẩm
-            const fallbackName = `Sản phẩm #${productId}`;
-            console.log(`Using fallback name: ${fallbackName}`);
-            await connection.query(
-              'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-              [orderId, productId, fallbackName, quantity, price]
-            );
-          }
-        } else {
-          // Nếu có tên sản phẩm, sử dụng nó
-          await connection.query(
-            'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-            [orderId, productId, productName, quantity, price]
-          );
-        }
-      }
-
-      // Commit transaction
-      await connection.commit();
-      connection.release();
-
-      res.status(201).json({
-        status: 'success',
-        message: 'Order created successfully',
-        data: {
-          order_id: orderId,
-          user_id,
-          total_amount,
-          items
-        }
-      });
-    } catch (error) {
-      // Rollback nếu có lỗi
-      await connection.rollback();
-      connection.release();
-      console.error('Transaction error:', error);
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({ status: 'error', message: error.message });
-  }
-});
-
-// API endpoints cho sản phẩm (products)
-
-// Lấy tất cả sản phẩm với tùy chọn lọc theo danh mục và tìm kiếm
+// Get all products
 app.get('/api/products', async (req, res) => {
   try {
     const { category, search } = req.query;
 
     console.log(`Fetching products with category: ${category}, search: ${search}`);
 
-    let query = 'SELECT * FROM products WHERE 1=1';
-    const params = [];
+    let query = supabase.from('products').select('*');
 
-    // Lọc theo danh mục nếu được cung cấp
     if (category && category !== 'All') {
-      query += ' AND category = ?';
-      params.push(category);
+      query = query.eq('category', category);
     }
 
-    // Tìm kiếm theo tên sản phẩm nếu được cung cấp
     if (search && search.trim() !== '') {
-      query += ' AND name LIKE ?';
-      params.push(`%${search.trim()}%`);
+      query = query.ilike('name', `%${search.trim()}%`);
       console.log(`Searching for products with name like: %${search.trim()}%`);
     }
 
-    query += ' ORDER BY id DESC';
+    query = query.order('id', { ascending: false });
 
-    console.log('Executing query:', query, 'with params:', params);
+    console.log('Executing query:', query);
 
-    const [rows] = await pool.query(query, params);
+    const { data: rows, error } = await query;
+
+    if (error) throw error;
 
     console.log(`Found ${rows.length} products`);
 
@@ -752,15 +575,17 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Lấy sản phẩm theo ID
+// Get product by ID
 app.get('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
 
-    const [rows] = await pool.query(
-      'SELECT * FROM products WHERE id = ?',
-      [productId]
-    );
+    const { data: rows, error } = await supabase
+      .from('products')
+      .select('*')
+      .eq('id', productId);
+
+    if (error) throw error;
 
     if (rows.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Product not found' });
@@ -773,7 +598,7 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Tạo sản phẩm mới
+// Create product
 app.post('/api/products', async (req, res) => {
   try {
     const { name, price, description, image_path, category } = req.body;
@@ -782,22 +607,17 @@ app.post('/api/products', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Name and price are required' });
     }
 
-    const [result] = await pool.query(
-      'INSERT INTO products (name, price, description, image_path, category) VALUES (?, ?, ?, ?, ?)',
-      [name, price, description || '', image_path || '', category || 'Other']
-    );
+    const { data, error } = await supabase
+      .from('products')
+      .insert([{ name, price, description: description || '', image_path: image_path || '', category: category || 'Other' }])
+      .select();
+
+    if (error) throw error;
 
     res.status(201).json({
       status: 'success',
       message: 'Product created successfully',
-      data: {
-        id: result.insertId,
-        name,
-        price,
-        description,
-        image_path,
-        category
-      }
+      data: data[0]
     });
   } catch (error) {
     console.error('Error creating product:', error);
@@ -805,7 +625,7 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
-// Cập nhật sản phẩm
+// Update product
 app.put('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
@@ -815,26 +635,22 @@ app.put('/api/products/:id', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Name and price are required' });
     }
 
-    const [result] = await pool.query(
-      'UPDATE products SET name = ?, price = ?, description = ?, image_path = ?, category = ? WHERE id = ?',
-      [name, price, description || '', image_path || '', category || 'Other', productId]
-    );
+    const { data, error } = await supabase
+      .from('products')
+      .update({ name, price, description: description || '', image_path: image_path || '', category: category || 'Other' })
+      .eq('id', productId)
+      .select();
 
-    if (result.affectedRows === 0) {
+    if (error) throw error;
+
+    if (data.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Product not found' });
     }
 
     res.json({
       status: 'success',
       message: 'Product updated successfully',
-      data: {
-        id: productId,
-        name,
-        price,
-        description,
-        image_path,
-        category
-      }
+      data: data[0]
     });
   } catch (error) {
     console.error('Error updating product:', error);
@@ -842,17 +658,20 @@ app.put('/api/products/:id', async (req, res) => {
   }
 });
 
-// Xóa sản phẩm
+// Delete product
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const productId = req.params.id;
 
-    const [result] = await pool.query(
-      'DELETE FROM products WHERE id = ?',
-      [productId]
-    );
+    const { data, error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', productId)
+      .select();
 
-    if (result.affectedRows === 0) {
+    if (error) throw error;
+
+    if (data.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Product not found' });
     }
 
@@ -867,14 +686,17 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// Lấy tất cả người dùng (cho admin)
+// Get all users (for admin)
 app.get('/api/users', async (req, res) => {
   try {
     console.log('Fetching all users...');
 
-    const [rows] = await pool.query(
-      'SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC'
-    );
+    const { data: rows, error } = await supabase
+      .from('users')
+      .select('id, name, email, role, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
 
     console.log(`Found ${rows.length} users`);
 
@@ -885,7 +707,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Tạo người dùng mới (cho admin)
+// Create user (for admin)
 app.post('/api/users', async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -894,31 +716,30 @@ app.post('/api/users', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'All fields are required' });
     }
 
-    // Kiểm tra email đã tồn tại chưa
-    const [existingUsers] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email);
+
+    if (checkError) throw checkError;
 
     if (existingUsers.length > 0) {
       return res.status(409).json({ status: 'error', message: 'Email already exists' });
     }
 
-    // Mã hóa mật khẩu
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Thêm người dùng mới vào cơ sở dữ liệu
-    const [result] = await pool.query(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
-      [name, email, hashedPassword, role]
-    );
+    const { data, error } = await supabase
+      .from('users')
+      .insert([{ name, email, password: hashedPassword, role }])
+      .select();
+
+    if (error) throw error;
 
     res.status(201).json({
       status: 'success',
       message: 'User created successfully',
-      data: {
-        id: result.insertId,
-        name,
-        email,
-        role
-      }
+      data: data[0]
     });
   } catch (error) {
     console.error('Error creating user:', error);
@@ -926,7 +747,7 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-// Cập nhật người dùng (cho admin và người dùng thông thường)
+// Update user (for admin and regular users)
 app.put('/api/users/:id', async (req, res) => {
   try {
     const userId = req.params.id;
@@ -936,60 +757,61 @@ app.put('/api/users/:id', async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Name and email are required' });
     }
 
-    // Kiểm tra người dùng tồn tại
-    const [existingUsers] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId);
+
+    if (checkError) throw checkError;
 
     if (existingUsers.length === 0) {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    // Kiểm tra email đã tồn tại chưa (nếu thay đổi email)
     if (email !== existingUsers[0].email) {
-      const [emailCheck] = await pool.query('SELECT * FROM users WHERE email = ? AND id != ?', [email, userId]);
+      const { data: emailCheck, error: emailError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .neq('id', userId);
+
+      if (emailError) throw emailError;
 
       if (emailCheck.length > 0) {
         return res.status(409).json({ status: 'error', message: 'Email already exists' });
       }
     }
 
-    let query = 'UPDATE users SET name = ?, email = ? WHERE id = ?';
-    let params = [name, email, userId];
+    let updateData = { name, email };
 
-    // Nếu có mật khẩu mới, mã hóa và cập nhật
     if (password) {
-      const hashedPassword = await bcrypt.hash(password, saltRounds);
-      query = 'UPDATE users SET name = ?, email = ?, password = ? WHERE id = ?';
-      params = [name, email, hashedPassword, userId];
+      updateData.password = await bcrypt.hash(password, saltRounds);
     }
 
-    // Nếu có role (cho admin), cập nhật role
     if (role) {
-      query = query.replace('WHERE', ', role = ? WHERE');
-      params.splice(params.length - 1, 0, role);
+      updateData.role = role;
     }
 
-    // Nếu có ảnh đại diện mới, cập nhật
     if (profile_image) {
-      query = query.replace('WHERE', ', profile_image = ? WHERE');
-      params.splice(params.length - 1, 0, profile_image);
+      updateData.profile_image = profile_image;
     }
 
-    const [result] = await pool.query(query, params);
+    const { data, error } = await supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', userId)
+      .select();
 
-    if (result.affectedRows === 0) {
+    if (error) throw error;
+
+    if (data.length === 0) {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
     res.json({
       status: 'success',
       message: 'User updated successfully',
-      data: {
-        id: userId,
-        name,
-        email,
-        role: role || existingUsers[0].role,
-        profile_image: profile_image || existingUsers[0].profile_image
-      }
+      data: data[0]
     });
   } catch (error) {
     console.error('Error updating user:', error);
@@ -997,23 +819,31 @@ app.put('/api/users/:id', async (req, res) => {
   }
 });
 
-// Xóa người dùng (cho admin)
+// Delete user (for admin)
 app.delete('/api/users/:id', async (req, res) => {
   try {
     const userId = req.params.id;
 
-    // Kiểm tra người dùng tồn tại
-    const [existingUsers] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId);
+
+    if (checkError) throw checkError;
 
     if (existingUsers.length === 0) {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    // Kiểm tra xem có phải admin cuối cùng không
     if (existingUsers[0].role === 'admin') {
-      const [adminCount] = await pool.query('SELECT COUNT(*) as count FROM users WHERE role = "admin"');
+      const { data: adminCount, error: countError } = await supabase
+        .from('users')
+        .select('id', { count: 'exact' })
+        .eq('role', 'admin');
 
-      if (adminCount[0].count <= 1) {
+      if (countError) throw countError;
+
+      if (adminCount.length <= 1) {
         return res.status(400).json({
           status: 'error',
           message: 'Cannot delete the last admin user'
@@ -1021,10 +851,15 @@ app.delete('/api/users/:id', async (req, res) => {
       }
     }
 
-    // Xóa người dùng
-    const [result] = await pool.query('DELETE FROM users WHERE id = ?', [userId]);
+    const { data, error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', userId)
+      .select();
 
-    if (result.affectedRows === 0) {
+    if (error) throw error;
+
+    if (data.length === 0) {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
@@ -1038,19 +873,33 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-// Thêm API endpoint để kiểm tra dữ liệu sản phẩm
+// Debug products
 app.get('/api/debug/products', async (req, res) => {
   try {
-    // Lấy tất cả sản phẩm
-    const [products] = await pool.query('SELECT * FROM products');
+    const { data: products, error: productError } = await supabase
+      .from('products')
+      .select('*');
+
+    if (productError) throw productError;
+
     console.log('All products:', products);
 
-    // Tìm sản phẩm có tên Hamburger
-    const [hamburgers] = await pool.query('SELECT * FROM products WHERE name LIKE ?', ['%Hamburger%']);
+    const { data: hamburgers, error: hamburgerError } = await supabase
+      .from('products')
+      .select('*')
+      .ilike('name', '%Hamburger%');
+
+    if (hamburgerError) throw hamburgerError;
+
     console.log('Hamburger products:', hamburgers);
 
-    // Kiểm tra bảng order_items
-    const [orderItems] = await pool.query('SELECT * FROM order_items LIMIT 20');
+    const { data: orderItems, error: itemError } = await supabase
+      .from('order_items')
+      .select('*')
+      .limit(20);
+
+    if (itemError) throw itemError;
+
     console.log('Recent order items:', orderItems);
 
     res.json({
@@ -1067,73 +916,50 @@ app.get('/api/debug/products', async (req, res) => {
   }
 });
 
-
-// API để xóa bảng food_items và tạo bảng products
-
-// API để kiểm tra và sửa thông tin sản phẩm trong đơn hàng
+// Check and fix product names in order_items
 app.get('/api/debug/check-products', async (req, res) => {
   try {
-    // 1. Kiểm tra tất cả các sản phẩm trong bảng products
-    const [products] = await pool.query(`
-      SELECT id, name FROM products
-    `);
+    const { data: products, error: productError } = await supabase
+      .from('products')
+      .select('id, name');
+
+    if (productError) throw productError;
 
     console.log(`Found ${products.length} products in products table`);
 
-    // 2. Kiểm tra các mục đơn hàng và sản phẩm tương ứng
-    const [orderItems] = await pool.query(`
-      SELECT oi.id, oi.order_id, oi.product_id, oi.name,
-             p.id as found_product_id, p.name as product_name
-      FROM order_items oi
-      LEFT JOIN products p ON oi.product_id = p.id
-      LIMIT 50
-    `);
+    const { data: orderItems, error: itemError } = await supabase
+      .from('order_items')
+      .select(`
+        id, order_id, product_id, name,
+        products!left(id:found_product_id, name:product_name)
+      `)
+      .limit(50);
+
+    if (itemError) throw itemError;
 
     console.log(`Checking ${orderItems.length} order items`);
 
-    // Đếm số lượng mục không tìm thấy sản phẩm
     let missingProductCount = 0;
+    let updatedCount = 0;
+
     for (const item of orderItems) {
-      if (!item.found_product_id) {
+      if (!item.products?.found_product_id) {
         missingProductCount++;
         console.log(`Order item #${item.id} has product_id ${item.product_id} but no matching product found`);
       }
-    }
 
-    // 3. Kiểm tra xem có sản phẩm nào trong food_items không
-    let foodItems = [];
-    try {
-      const [result] = await pool.query(`
-        SELECT id, name FROM food_items
-      `);
-      foodItems = result;
-      console.log(`Found ${foodItems.length} items in food_items table`);
-    } catch (error) {
-      console.log('Could not query food_items table:', error.message);
-    }
+      if (!item.name) {
+        let productName = item.products?.product_name || `Sản phẩm #${item.product_id}`;
 
-    // 4. Cập nhật tên sản phẩm trong order_items nếu không tìm thấy trong products
-    let updatedCount = 0;
-    for (const item of orderItems) {
-      if (!item.product_name) {
-        // Tìm tên sản phẩm trong food_items nếu có
-        const foodItem = foodItems.find(fi => fi.id === item.product_id);
-        if (foodItem) {
-          await pool.query(
-            'UPDATE order_items SET name = ? WHERE id = ?',
-            [foodItem.name, item.id]
-          );
-          updatedCount++;
-          console.log(`Updated order item #${item.id} with name from food_items: ${foodItem.name}`);
-        } else {
-          // Nếu không tìm thấy, đặt tên mặc định
-          await pool.query(
-            'UPDATE order_items SET name = ? WHERE id = ?',
-            [`Sản phẩm #${item.product_id}`, item.id]
-          );
-          updatedCount++;
-          console.log(`Updated order item #${item.id} with default name: Sản phẩm #${item.product_id}`);
-        }
+        const { error: updateError } = await supabase
+          .from('order_items')
+          .update({ name: productName })
+          .eq('id', item.id);
+
+        if (updateError) throw updateError;
+
+        updatedCount++;
+        console.log(`Updated order item #${item.id} with name: ${productName}`);
       }
     }
 
@@ -1141,11 +967,10 @@ app.get('/api/debug/check-products', async (req, res) => {
       status: 'success',
       message: `Found ${missingProductCount} order items with missing products. Updated ${updatedCount} items.`,
       data: {
-        products: products,
-        orderItems: orderItems,
-        foodItems: foodItems,
-        missingProductCount: missingProductCount,
-        updatedCount: updatedCount
+        products,
+        orderItems,
+        missingProductCount,
+        updatedCount
       }
     });
   } catch (error) {
@@ -1154,58 +979,35 @@ app.get('/api/debug/check-products', async (req, res) => {
   }
 });
 
-// API để cập nhật tên sản phẩm trong bảng order_items
+// Fix order items names
 app.post('/api/admin/update-order-items', async (req, res) => {
   try {
-    // Lấy tất cả các mục đơn hàng
-    const [orderItems] = await pool.query(`
-      SELECT id, order_id, product_id, name
-      FROM order_items
-      WHERE name IS NULL OR name = ''
-    `);
+    const { data: orderItems, error: itemError } = await supabase
+      .from('order_items')
+      .select('id, order_id, product_id, name')
+      .or('name.is.null,name.eq.""');
+
+    if (itemError) throw itemError;
 
     console.log(`Found ${orderItems.length} order items without names`);
 
-    // Cập nhật tên sản phẩm cho từng mục
     let updatedCount = 0;
     for (const item of orderItems) {
-      // Tìm sản phẩm trong bảng products
-      const [products] = await pool.query(
-        'SELECT name FROM products WHERE id = ?',
-        [item.product_id]
-      );
+      const { data: products, error: productError } = await supabase
+        .from('products')
+        .select('name')
+        .eq('id', item.product_id);
 
-      let productName = null;
+      if (productError) throw productError;
 
-      if (products.length > 0 && products[0].name) {
-        // Nếu tìm thấy trong products
-        productName = products[0].name;
-      } else {
-        // Nếu không tìm thấy trong products, tìm trong food_items
-        try {
-          const [foodItems] = await pool.query(
-            'SELECT name FROM food_items WHERE id = ?',
-            [item.product_id]
-          );
+      let productName = products.length > 0 && products[0].name ? products[0].name : `Sản phẩm #${item.product_id}`;
 
-          if (foodItems.length > 0 && foodItems[0].name) {
-            productName = foodItems[0].name;
-          }
-        } catch (error) {
-          console.log('Could not query food_items table:', error.message);
-        }
-      }
+      const { error: updateError } = await supabase
+        .from('order_items')
+        .update({ name: productName })
+        .eq('id', item.id);
 
-      // Nếu vẫn không tìm thấy, sử dụng ID sản phẩm
-      if (!productName) {
-        productName = `Sản phẩm #${item.product_id}`;
-      }
-
-      // Cập nhật tên sản phẩm
-      await pool.query(
-        'UPDATE order_items SET name = ? WHERE id = ?',
-        [productName, item.id]
-      );
+      if (updateError) throw updateError;
 
       updatedCount++;
     }
@@ -1224,161 +1026,16 @@ app.post('/api/admin/update-order-items', async (req, res) => {
   }
 });
 
-// Cập nhật API tạo đơn hàng để đảm bảo lưu tên sản phẩm
-app.post('/api/orders', async (req, res) => {
-  try {
-    const { user_id, total_amount, items } = req.body;
-
-    console.log('Received order request:', JSON.stringify({ user_id, total_amount, items }, null, 2));
-
-    if (!user_id || !total_amount || !items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ status: 'error', message: 'Invalid order data' });
-    }
-
-    // Bắt đầu transaction
-    const connection = await pool.getConnection();
-    await connection.beginTransaction();
-
-    try {
-      // Tạo đơn hàng
-      const [orderResult] = await connection.query(
-        'INSERT INTO orders (user_id, total_amount, status) VALUES (?, ?, ?)',
-        [user_id, total_amount, 'pending']
-      );
-
-      const orderId = orderResult.insertId;
-
-      // Thêm các sản phẩm vào đơn hàng
-      for (const item of items) {
-        // Đảm bảo product_id là số nguyên
-        const productId = parseInt(item.product_id || item.id);
-
-        if (isNaN(productId)) {
-          throw new Error(`Invalid product ID: ${item.product_id || item.id}`);
-        }
-
-        const quantity = parseInt(item.quantity) || 1;
-        const price = parseFloat(item.price) || 0;
-
-        // Lấy tên sản phẩm từ request
-        const productName = item.name;
-
-        console.log(`Adding item to order #${orderId}:`, {
-          product_id: productId,
-          name: productName,
-          quantity: quantity,
-          price: price
-        });
-
-        // Kiểm tra xem tên sản phẩm có null không
-        if (!productName) {
-          console.warn(`Warning: Product name is null for product_id ${productId}`);
-
-          // Nếu tên sản phẩm null, thử lấy từ bảng products
-          const [products] = await connection.query(
-            'SELECT name FROM products WHERE id = ?',
-            [productId]
-          );
-
-          if (products.length > 0 && products[0].name) {
-            console.log(`Found product name from database: ${products[0].name}`);
-            await connection.query(
-              'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-              [orderId, productId, products[0].name, quantity, price]
-            );
-          } else {
-            // Nếu không tìm thấy, sử dụng ID sản phẩm
-            const fallbackName = `Sản phẩm #${productId}`;
-            console.log(`Using fallback name: ${fallbackName}`);
-            await connection.query(
-              'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-              [orderId, productId, fallbackName, quantity, price]
-            );
-          }
-        } else {
-          // Nếu có tên sản phẩm, sử dụng nó
-          await connection.query(
-            'INSERT INTO order_items (order_id, product_id, name, quantity, price) VALUES (?, ?, ?, ?, ?)',
-            [orderId, productId, productName, quantity, price]
-          );
-        }
-      }
-
-      // Commit transaction
-      await connection.commit();
-      connection.release();
-
-      res.status(201).json({
-        status: 'success',
-        message: 'Order created successfully',
-        data: {
-          order_id: orderId,
-          user_id,
-          total_amount,
-          items
-        }
-      });
-    } catch (error) {
-      // Rollback nếu có lỗi
-      await connection.rollback();
-      connection.release();
-      console.error('Transaction error:', error);
-      throw error;
-    }
-  } catch (error) {
-    console.error('Error creating order:', error);
-    res.status(500).json({ status: 'error', message: error.message });
-  }
-});
-
-// API để cập nhật tên sản phẩm trong bảng order_items
-app.post('/api/admin/fix-order-items', async (req, res) => {
-  try {
-    // Lấy tất cả các mục đơn hàng không có tên
-    const [orderItems] = await pool.query(`
-      SELECT oi.id, oi.order_id, oi.product_id, oi.name, p.name as product_name
-      FROM order_items oi
-      LEFT JOIN products p ON oi.product_id = p.id
-      WHERE oi.name IS NULL OR oi.name = ''
-    `);
-
-    console.log(`Found ${orderItems.length} order items without names`);
-
-    // Cập nhật tên sản phẩm cho từng mục
-    let updatedCount = 0;
-    for (const item of orderItems) {
-      if (item.product_name) {
-        await pool.query(
-          'UPDATE order_items SET name = ? WHERE id = ?',
-          [item.product_name, item.id]
-        );
-        updatedCount++;
-      }
-    }
-
-    res.json({
-      status: 'success',
-      message: `Updated ${updatedCount} order items with product names`,
-      data: { total: orderItems.length, updated: updatedCount }
-    });
-  } catch (error) {
-    console.error('Error fixing order items:', error);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-});
-
-// API để cập nhật product_id trong bảng order_items
+// Fix order items product_id
 app.post('/api/admin/fix-order-items-product-id', async (req, res) => {
   try {
-    // 1. Lấy danh sách sản phẩm từ bảng products
-    const [products] = await pool.query(`
-      SELECT id, name, price FROM products
-      ORDER BY id ASC
-      LIMIT 1
-    `);
+    const { data: products, error: productError } = await supabase
+      .from('products')
+      .select('id, name, price')
+      .order('id', { ascending: true })
+      .limit(1);
+
+    if (productError) throw productError;
 
     if (products.length === 0) {
       return res.status(400).json({
@@ -1387,26 +1044,37 @@ app.post('/api/admin/fix-order-items-product-id', async (req, res) => {
       });
     }
 
-    // Lấy sản phẩm đầu tiên để sử dụng làm tham chiếu
     const defaultProduct = products[0];
     console.log(`Using default product: ${defaultProduct.name} (ID: ${defaultProduct.id})`);
 
-    // 2. Cập nhật tất cả các mục trong order_items có product_id không tồn tại
-    const [result] = await pool.query(`
-      UPDATE order_items oi
-      LEFT JOIN products p ON oi.product_id = p.id
-      SET oi.product_id = ?, oi.name = ?
-      WHERE p.id IS NULL
-    `, [defaultProduct.id, defaultProduct.name]);
+    const { data: orderItems, error: itemError } = await supabase
+      .from('order_items')
+      .select(`
+        id, product_id, name,
+        products!left(id:product_id_check)
+      `);
 
-    console.log(`Updated ${result.affectedRows} order items with valid product_id`);
+    if (itemError) throw itemError;
+
+    const itemsToUpdate = orderItems.filter(item => !item.products?.product_id_check);
+
+    let updatedCount = 0;
+    for (const item of itemsToUpdate) {
+      const { error: updateError } = await supabase
+        .from('order_items')
+        .update({ product_id: defaultProduct.id, name: defaultProduct.name })
+        .eq('id', item.id);
+
+      if (updateError) throw updateError;
+      updatedCount++;
+    }
 
     res.json({
       status: 'success',
-      message: `Updated ${result.affectedRows} order items with valid product_id`,
+      message: `Updated ${updatedCount} order items with valid product_id`,
       data: {
-        defaultProduct: defaultProduct,
-        affectedRows: result.affectedRows
+        defaultProduct,
+        affectedRows: updatedCount
       }
     });
   } catch (error) {
@@ -1418,103 +1086,23 @@ app.post('/api/admin/fix-order-items-product-id', async (req, res) => {
   }
 });
 
-// Cập nhật API lấy danh sách đơn hàng
-app.get('/api/orders', async (req, res) => {
-  try {
-    const { user_id, status } = req.query;
-
-    let query = `
-      SELECT o.*, u.name as user_name 
-      FROM orders o
-      LEFT JOIN users u ON o.user_id = u.id
-      WHERE 1=1
-    `;
-
-    const params = [];
-
-    if (user_id) {
-      query += ' AND o.user_id = ?';
-      params.push(user_id);
-    }
-
-    if (status) {
-      query += ' AND o.status = ?';
-      params.push(status);
-    }
-
-    // Sắp xếp theo id giảm dần (đơn hàng mới nhất trước)
-    query += ' ORDER BY o.id DESC';
-
-    console.log('Orders query:', query);
-
-    const [orders] = await pool.query(query, params);
-    console.log(`Found ${orders.length} orders`);
-
-    // Lấy chi tiết đơn hàng cho mỗi đơn hàng
-    const ordersWithItems = await Promise.all(orders.map(async (order) => {
-      // Lấy thông tin chi tiết đơn hàng kèm tên sản phẩm
-      const [items] = await pool.query(`
-        SELECT oi.*, p.name as product_name, p.image_path 
-        FROM order_items oi
-        LEFT JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = ?
-      `, [order.id]);
-
-      console.log(`Order #${order.id} has ${items.length} items`);
-
-      // Sử dụng tên sản phẩm từ order_items hoặc từ products
-      const itemsWithNames = items.map(item => {
-        // In ra thông tin để debug
-        console.log(`Item in order #${order.id}:`, {
-          id: item.id,
-          product_id: item.product_id,
-          name: item.name,
-          product_name: item.product_name
-        });
-
-        // Nếu không có tên sản phẩm, sử dụng ID sản phẩm
-        return {
-          ...item,
-          name: item.name || item.product_name || `Sản phẩm #${item.product_id}`
-        };
-      });
-
-      return {
-        ...order,
-        items: itemsWithNames
-      };
-    }));
-
-    res.json({
-      status: 'success',
-      data: ordersWithItems
-    });
-  } catch (error) {
-    console.error('Error fetching orders:', error);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-});
-
-// API lấy danh sách đơn hàng của người dùng
+// Get user orders
 app.get('/users/:id/orders', async (req, res) => {
   try {
     const userId = req.params.id;
-    
+
     console.log(`Getting orders for user ${userId}`);
-    
-    // Lấy danh sách đơn hàng
-    const [orders] = await pool.query(
-      `SELECT * FROM orders 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC`,
-      [userId]
-    );
-    
+
+    const { data: orders, error } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
     console.log(`Found ${orders.length} orders for user ${userId}`);
-    
+
     res.json({
       status: 'success',
       data: orders
@@ -1528,24 +1116,25 @@ app.get('/users/:id/orders', async (req, res) => {
   }
 });
 
-// API để lấy các mục trong đơn hàng
+// Get order items
 app.get('/orders/:id/items', async (req, res) => {
   try {
     const orderId = req.params.id;
-    
+
     console.log(`Getting items for order ${orderId}`);
-    
-    // Lấy các mục trong đơn hàng
-    const [items] = await pool.query(
-      `SELECT oi.*, p.image_path, p.name as product_name
-       FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
-    
+
+    const { data: items, error } = await supabase
+      .from('order_items')
+      .select(`
+        *,
+        products(image_path, name:product_name)
+      `)
+      .eq('order_id', orderId);
+
+    if (error) throw error;
+
     console.log(`Found ${items.length} items for order ${orderId}`);
-    
+
     res.json({
       status: 'success',
       data: items
@@ -1559,7 +1148,7 @@ app.get('/orders/:id/items', async (req, res) => {
   }
 });
 
-// Cập nhật thông tin cá nhân (cho người dùng)
+// Update user profile
 app.put('/api/users/profile/:id', async (req, res) => {
   try {
     const userId = req.params.id;
@@ -1572,8 +1161,12 @@ app.put('/api/users/profile/:id', async (req, res) => {
       });
     }
 
-    // Kiểm tra người dùng tồn tại
-    const [existingUsers] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId);
+
+    if (checkError) throw checkError;
 
     if (existingUsers.length === 0) {
       return res.status(404).json({
@@ -1582,9 +1175,14 @@ app.put('/api/users/profile/:id', async (req, res) => {
       });
     }
 
-    // Kiểm tra email đã tồn tại chưa (nếu thay đổi email)
     if (email !== existingUsers[0].email) {
-      const [emailCheck] = await pool.query('SELECT * FROM users WHERE email = ? AND id != ?', [email, userId]);
+      const { data: emailCheck, error: emailError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .neq('id', userId);
+
+      if (emailError) throw emailError;
 
       if (emailCheck.length > 0) {
         return res.status(409).json({
@@ -1594,25 +1192,25 @@ app.put('/api/users/profile/:id', async (req, res) => {
       }
     }
 
-    let query = 'UPDATE users SET name = ?, email = ? WHERE id = ?';
-    let params = [name, email, userId];
+    let updateData = { name, email };
 
-    // Nếu có mật khẩu mới, mã hóa và cập nhật
     if (password) {
-      const hashedPassword = await bcrypt.hash(password, saltRounds);
-      query = 'UPDATE users SET name = ?, email = ?, password = ? WHERE id = ?';
-      params = [name, email, hashedPassword, userId];
+      updateData.password = await bcrypt.hash(password, saltRounds);
     }
 
-    // Nếu có ảnh đại diện mới, cập nhật
     if (profile_image) {
-      query = query.replace('WHERE', ', profile_image = ? WHERE');
-      params.splice(params.length - 1, 0, profile_image);
+      updateData.profile_image = profile_image;
     }
 
-    const [result] = await pool.query(query, params);
+    const { data, error } = await supabase
+      .from('users')
+      .update(updateData)
+      .eq('id', userId)
+      .select();
 
-    if (result.affectedRows === 0) {
+    if (error) throw error;
+
+    if (data.length === 0) {
       return res.status(404).json({
         status: 'error',
         message: 'User not found'
@@ -1622,12 +1220,7 @@ app.put('/api/users/profile/:id', async (req, res) => {
     res.json({
       status: 'success',
       message: 'Profile updated successfully',
-      data: {
-        id: userId,
-        name,
-        email,
-        profile_image: profile_image || existingUsers[0].profile_image
-      }
+      data: data[0]
     });
   } catch (error) {
     console.error('Error updating profile:', error);
@@ -1638,7 +1231,7 @@ app.put('/api/users/profile/:id', async (req, res) => {
   }
 });
 
-// Tạo thư mục uploads nếu chưa tồn tại
+// Configure multer for local storage (optional, as we'll use Supabase Storage)
 const uploadDir = path.join(__dirname, 'uploads');
 const profileImagesDir = path.join(uploadDir, 'profile_images');
 
@@ -1650,7 +1243,6 @@ if (!fs.existsSync(profileImagesDir)) {
   fs.mkdirSync(profileImagesDir);
 }
 
-// Cấu hình multer để lưu file upload
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, profileImagesDir);
@@ -1664,9 +1256,8 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // Giới hạn 5MB
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: function (req, file, cb) {
-    // Chỉ chấp nhận file ảnh
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -1675,10 +1266,10 @@ const upload = multer({
   }
 });
 
-// Phục vụ các file tĩnh từ thư mục uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve static files
+app.use('/uploads', express.static(path.join(__dirname, 'Uploads')));
 
-// API endpoint để upload ảnh đại diện
+// Upload profile image to Supabase Storage
 app.post('/api/upload-profile-image', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -1696,8 +1287,13 @@ app.post('/api/upload-profile-image', upload.single('image'), async (req, res) =
       });
     }
 
-    // Kiểm tra người dùng tồn tại
-    const [users] = await pool.query('SELECT * FROM users WHERE id = ?', [userId]);
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId);
+
+    if (userError) throw userError;
+
     if (users.length === 0) {
       return res.status(404).json({
         status: 'error',
@@ -1705,22 +1301,38 @@ app.post('/api/upload-profile-image', upload.single('image'), async (req, res) =
       });
     }
 
-    // Đường dẫn tương đối đến file ảnh
-    const relativePath = '/uploads/profile_images/' + req.file.filename;
+    const filePath = req.file.path;
+    const fileName = `profile_images/profile-${userId}-${Date.now()}${path.extname(req.file.originalname)}`;
 
-    // Cập nhật đường dẫn ảnh đại diện trong cơ sở dữ liệu
-    await pool.query(
-      'UPDATE users SET profile_image = ? WHERE id = ?',
-      [relativePath, userId]
-    );
+    const fileBuffer = fs.readFileSync(filePath);
 
-    // Trả về đường dẫn đầy đủ đến ảnh
-    const fullUrl = req.protocol + '://' + req.get('host') + relativePath;
+    const { error: uploadError } = await supabase.storage
+      .from('profile-images')
+      .upload(fileName, fileBuffer, {
+        contentType: req.file.mimetype
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = supabase.storage
+      .from('profile-images')
+      .getPublicUrl(fileName);
+
+    const imageUrl = publicUrlData.publicUrl;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ profile_image: imageUrl })
+      .eq('id', userId);
+
+    if (updateError) throw updateError;
+
+    fs.unlinkSync(filePath); // Delete local file after uploading to Supabase
 
     res.json({
       status: 'success',
       message: 'Profile image uploaded successfully',
-      image_url: fullUrl
+      image_url: imageUrl
     });
   } catch (error) {
     console.error('Error uploading profile image:', error);
@@ -1731,24 +1343,22 @@ app.post('/api/upload-profile-image', upload.single('image'), async (req, res) =
   }
 });
 
-// API lấy thông báo của người dùng
+// Get user notifications
 app.get('/api/users/:userId/notifications', async (req, res) => {
   try {
     const userId = req.params.userId;
 
-    // Kiểm tra userId
     if (!userId) {
       return res.status(400).json({ status: 'error', message: 'User ID is required' });
     }
 
-    // Lấy thông báo từ database
-    const [notifications] = await pool.query(
-      `SELECT id, user_id, title, message, is_read, created_at 
-       FROM notifications 
-       WHERE user_id = ? 
-       ORDER BY created_at DESC`,
-      [userId]
-    );
+    const { data: notifications, error } = await supabase
+      .from('notifications')
+      .select('id, user_id, title, message, is_read, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
 
     console.log(`Found ${notifications.length} notifications for user ${userId}`);
 
@@ -1762,16 +1372,17 @@ app.get('/api/users/:userId/notifications', async (req, res) => {
   }
 });
 
-// API đánh dấu thông báo đã đọc
+// Mark notification as read
 app.put('/api/notifications/:id/read', async (req, res) => {
   try {
     const notificationId = req.params.id;
 
-    // Cập nhật trạng thái đã đọc
-    await pool.query(
-      'UPDATE notifications SET is_read = 1 WHERE id = ?',
-      [notificationId]
-    );
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('id', notificationId);
+
+    if (error) throw error;
 
     res.json({
       status: 'success',
@@ -1783,16 +1394,17 @@ app.put('/api/notifications/:id/read', async (req, res) => {
   }
 });
 
-// API đánh dấu tất cả thông báo của người dùng đã đọc
+// Mark all notifications as read
 app.put('/api/users/:userId/notifications/read-all', async (req, res) => {
   try {
     const userId = req.params.userId;
 
-    // Cập nhật tất cả thông báo của người dùng thành đã đọc
-    await pool.query(
-      'UPDATE notifications SET is_read = 1 WHERE user_id = ?',
-      [userId]
-    );
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .eq('user_id', userId);
+
+    if (error) throw error;
 
     res.json({
       status: 'success',
@@ -1804,30 +1416,27 @@ app.put('/api/users/:userId/notifications/read-all', async (req, res) => {
   }
 });
 
-// API endpoints cho chat
-
-// Lấy tin nhắn chat của người dùng
+// Get chat messages
 app.get('/api/chat/messages/:userId', async (req, res) => {
   try {
     const userId = req.params.userId;
-    
-    // Thêm log để debug
+
     console.log(`Getting messages for user ${userId}`);
-    
-    const [messages] = await pool.query(
-      `SELECT * FROM chat_messages 
-       WHERE user_id = ? 
-       ORDER BY created_at ASC`,
-      [userId]
-    );
-    
+
+    const { data: messages, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+
     console.log(`Retrieved ${messages.length} messages for user ${userId}`);
-    
-    // Thêm header để tránh cache
+
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    
+
     res.json({
       status: 'success',
       data: messages
@@ -1838,31 +1447,33 @@ app.get('/api/chat/messages/:userId', async (req, res) => {
   }
 });
 
-// API gửi tin nhắn chat
+// Send chat message
 app.post('/api/chat/messages', async (req, res) => {
   console.log('Received chat message request:', req.body);
   try {
     const { userId, message, sender } = req.body;
-    
+
     if (!userId || !message || !sender) {
-      return res.status(400).json({ 
-        status: 'error', 
-        message: 'Missing required fields' 
+      return res.status(400).json({
+        status: 'error',
+        message: 'Missing required fields'
       });
     }
-    
-    const [result] = await pool.query(
-      'INSERT INTO chat_messages (user_id, sender, message) VALUES (?, ?, ?)',
-      [userId, sender, message]
-    );
-    
-    console.log('Message saved successfully, ID:', result.insertId);
-    
+
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert([{ user_id: userId, sender, message }])
+      .select();
+
+    if (error) throw error;
+
+    console.log('Message saved successfully, ID:', data[0].id);
+
     res.json({
       status: 'success',
       message: 'Message sent successfully',
       data: {
-        id: result.insertId
+        id: data[0].id
       }
     });
   } catch (error) {
@@ -1871,51 +1482,66 @@ app.post('/api/chat/messages', async (req, res) => {
   }
 });
 
-// Lấy danh sách người dùng có tin nhắn (cho admin)
+// Get chat users (for admin)
 app.get('/api/chat/users', async (req, res) => {
   try {
-    const [users] = await pool.query(`
-      SELECT DISTINCT cm.user_id, u.name as user_name,
-        (SELECT message FROM chat_messages 
-         WHERE user_id = cm.user_id 
-         ORDER BY created_at DESC LIMIT 1) as last_message,
-        (SELECT created_at FROM chat_messages 
-         WHERE user_id = cm.user_id 
-         ORDER BY created_at DESC LIMIT 1) as last_message_time,
-        (SELECT COUNT(*) FROM chat_messages 
-         WHERE user_id = cm.user_id AND sender = 'user' AND is_read = 0) as unread_count
-      FROM chat_messages cm
-      LEFT JOIN users u ON cm.user_id = u.id
-      ORDER BY last_message_time DESC
-    `);
-    
+    const { data: users, error } = await supabase.rpc('get_chat_users', {});
+
+    if (error) {
+      console.error('Lỗi khi lấy danh sách người dùng chat:', error);
+      throw new Error(`Lỗi truy vấn: ${error.message}`);
+    }
+
+    console.log(`Tìm thấy ${users.length} người dùng chat (trước định dạng):`, JSON.stringify(users, null, 2));
+
+    const formattedUsers = users.map(user => {
+      const formattedUser = {
+        user_id: user.user_id ?? 0,
+        user_name: user.user_name ?? 'Người dùng không tên',
+        message: user.message ?? 'Không có tin nhắn',
+        created_at: user.created_at ? new Date(user.created_at).toISOString() : new Date().toISOString(),
+        unread_count: user.unread_count ?? 0
+      };
+      if (!formattedUser.user_name || !formattedUser.message || !formattedUser.created_at) {
+        console.warn('Phát hiện giá trị null sau định dạng:', formattedUser);
+      }
+      return formattedUser;
+    });
+
+    console.log('Dữ liệu sau khi định dạng:', JSON.stringify(formattedUsers, null, 2));
+
     res.json({
       status: 'success',
-      data: users
+      data: formattedUsers
     });
   } catch (error) {
-    console.error('Error fetching chat users:', error);
-    res.status(500).json({ status: 'error', message: error.message });
+    console.error('Lỗi khi lấy danh sách người dùng chat:', error);
+    res.status(500).json({
+      status: 'error',
+      message: error.message || 'Lỗi máy chủ nội bộ'
+    });
   }
 });
 
-// Đánh dấu tin nhắn đã đọc
+// Mark messages as read
 app.post('/api/chat/mark-read', async (req, res) => {
   try {
     const { userId, sender } = req.body;
-    
+
     console.log(`Marking messages as read for user ${userId}, sender ${sender}`);
-    
-    await pool.query(
-      'UPDATE chat_messages SET is_read = TRUE WHERE user_id = ? AND sender = ?',
-      [userId, sender]
-    );
-    
-    // Thêm header để tránh cache
+
+    const { error } = await supabase
+      .from('chat_messages')
+      .update({ is_read: true })
+      .eq('user_id', userId)
+      .eq('sender', sender);
+
+    if (error) throw error;
+
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
-    
+
     res.json({
       status: 'success',
       message: 'Messages marked as read'
@@ -1926,43 +1552,45 @@ app.post('/api/chat/mark-read', async (req, res) => {
   }
 });
 
-// API health check
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });
 
-// API để lấy chi tiết đơn hàng
+// Get order details
 app.get('/api/orders/:id/details', async (req, res) => {
   try {
     const orderId = req.params.id;
-    
-    // Lấy thông tin đơn hàng
-    const [orders] = await pool.query(
-      'SELECT * FROM orders WHERE id = ?',
-      [orderId]
-    );
-    
+
+    const { data: orders, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('id', orderId);
+
+    if (orderError) throw orderError;
+
     if (orders.length === 0) {
       return res.status(404).json({
         status: 'error',
         message: 'Order not found'
       });
     }
-    
-    // Lấy các mục trong đơn hàng với thông tin sản phẩm
-    const [items] = await pool.query(
-      `SELECT oi.*, p.name, p.image_url 
-       FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
-    
+
+    const { data: items, error: itemError } = await supabase
+      .from('order_items')
+      .select(`
+        *,
+        products(name, image_url)
+      `)
+      .eq('order_id', orderId);
+
+    if (itemError) throw itemError;
+
     res.json({
       status: 'success',
       data: {
         order: orders[0],
-        items: items
+        items
       }
     });
   } catch (error) {
@@ -1974,87 +1602,55 @@ app.get('/api/orders/:id/details', async (req, res) => {
   }
 });
 
-// API để lấy các mục trong đơn hàng
-app.get('/api/orders/:id/items', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    
-    // Lấy các mục trong đơn hàng
-    const [items] = await pool.query(
-      `SELECT oi.*, p.image_path, p.name as product_name
-       FROM order_items oi
-       LEFT JOIN products p ON oi.product_id = p.id
-       WHERE oi.order_id = ?`,
-      [orderId]
-    );
-    
-    res.json({
-      status: 'success',
-      data: items
-    });
-  } catch (error) {
-    console.error('Error getting order items:', error);
-    res.status(500).json({
-      status: 'error',
-      message: error.message
-    });
-  }
-});
-
-// Thêm API endpoint để kiểm tra và sửa thông tin sản phẩm trong đơn hàng
+// Fix order items for returning orders
 app.get('/api/debug/fix-order-items', async (req, res) => {
   try {
-    // 1. Lấy danh sách đơn hàng có trạng thái returning
-    const [returningOrders] = await pool.query(`
-      SELECT id, status FROM orders 
-      WHERE status = 'returning'
-    `);
-    
+    const { data: returningOrders, error: orderError } = await supabase
+      .from('orders')
+      .select('id, status')
+      .eq('status', 'returning');
+
+    if (orderError) throw orderError;
+
     console.log(`Found ${returningOrders.length} orders with returning status`);
-    
-    // 2. Lấy thông tin chi tiết các mục trong đơn hàng
+
     let fixedItems = 0;
     for (const order of returningOrders) {
       const orderId = order.id;
-      
-      // Lấy các mục trong đơn hàng
-      const [items] = await pool.query(`
-        SELECT id, order_id, product_id, name 
-        FROM order_items 
-        WHERE order_id = ?
-      `, [orderId]);
-      
+
+      const { data: items, error: itemError } = await supabase
+        .from('order_items')
+        .select('id, order_id, product_id, name')
+        .eq('order_id', orderId);
+
+      if (itemError) throw itemError;
+
       console.log(`Order #${orderId} has ${items.length} items`);
-      
-      // Kiểm tra và cập nhật tên sản phẩm nếu cần
+
       for (const item of items) {
         if (!item.name || item.name === '') {
-          // Tìm thông tin sản phẩm
-          const [products] = await pool.query(`
-            SELECT name FROM products WHERE id = ?
-          `, [item.product_id]);
-          
-          if (products.length > 0) {
-            // Cập nhật tên sản phẩm
-            await pool.query(`
-              UPDATE order_items SET name = ? WHERE id = ?
-            `, [products[0].name, item.id]);
-            
-            fixedItems++;
-            console.log(`Fixed item #${item.id} with product name: ${products[0].name}`);
-          } else {
-            // Nếu không tìm thấy sản phẩm, đặt tên mặc định
-            await pool.query(`
-              UPDATE order_items SET name = ? WHERE id = ?
-            `, [`Sản phẩm #${item.product_id}`, item.id]);
-            
-            fixedItems++;
-            console.log(`Fixed item #${item.id} with default name: Sản phẩm #${item.product_id}`);
-          }
+          const { data: products, error: productError } = await supabase
+            .from('products')
+            .select('name')
+            .eq('id', item.product_id);
+
+          if (productError) throw productError;
+
+          const productName = products.length > 0 ? products[0].name : `Sản phẩm #${item.product_id}`;
+
+          const { error: updateError } = await supabase
+            .from('order_items')
+            .update({ name: productName })
+            .eq('id', item.id);
+
+          if (updateError) throw updateError;
+
+          fixedItems++;
+          console.log(`Fixed item #${item.id} with product name: ${productName}`);
         }
       }
     }
-    
+
     res.json({
       status: 'success',
       message: `Fixed ${fixedItems} items in returning orders`,
@@ -2071,43 +1667,3 @@ app.get('/api/debug/fix-order-items', async (req, res) => {
     });
   }
 });
-
-// API lấy tất cả đơn hàng
-app.get('/api/orders', async (req, res) => {
-  try {
-    // Lấy danh sách đơn hàng từ database
-    const [orders] = await pool.query(`
-      SELECT o.*, u.name as user_name
-      FROM orders o
-      LEFT JOIN users u ON o.user_id = u.id
-      WHERE 1=1
-     ORDER BY o.id DESC
-    `);
-    
-    console.log(`Found ${orders.length} orders`);
-    
-    // Log trạng thái của các đơn hàng để debug
-    orders.forEach(order => {
-      console.log(`Order #${order.id}: ${order.status} - ${order.total_amount}`);
-    });
-
-    // Lấy chi tiết sản phẩm cho mỗi đơn hàng
-    for (const order of orders) {
-      const [items] = await pool.query(
-        'SELECT * FROM order_items WHERE order_id = ?',
-        [order.id]
-      );
-      order.items = items;
-    }
-    
-    console.log(`Successfully parsed ${orders.length} orders`);
-    
-    res.json(orders);
-  } catch (error) {
-    console.error('Error fetching orders:', error);
-    res.status(500).json({ status: 'error', message: error.message });
-  }
-});
-
-
-

@@ -8,10 +8,10 @@ class ProductsGrid extends StatefulWidget {
   final String? searchQuery;
 
   const ProductsGrid({
-    Key? key,
+    super.key,
     this.category,
     this.searchQuery,
-  }) : super(key: key);
+  });
 
   @override
   State<ProductsGrid> createState() => _ProductsGridState();
@@ -174,12 +174,12 @@ class ShopeeStyleProductCard extends StatelessWidget {
   final String soldCount;
 
   const ShopeeStyleProductCard({
-    Key? key,
+    super.key,
     required this.product,
     required this.docId,
     required this.discount,
     required this.soldCount,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

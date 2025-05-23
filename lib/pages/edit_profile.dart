@@ -171,7 +171,7 @@ class _EditProfileState extends State<EditProfile> {
       if (_imageFile != null || _webImageBytes != null) {
         if (kIsWeb && _webImageBytes != null) {
           // Upload ảnh trên web
-          print("Uploading web image: ${_webImageName}");
+          print("Uploading web image: $_webImageName");
           newProfileImageUrl = await ApiService.uploadProfileImageWeb(
               userId!, _webImageBytes!, _webImageName ?? "profile_image.jpg");
         } else if (!kIsWeb && _imageFile != null) {
